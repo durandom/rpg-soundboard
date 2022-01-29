@@ -5,3 +5,31 @@
     * `adafruit-circuitpython-bundle-5.x-mpy-20201205`
 * 7 is using `adafruit-circuitpython-trellis_m4_express-en_US-7.1.1.uf2`
     * `adafruit-circuitpython-bundle-7.x-mpy-20220127`
+
+
+https://learn.adafruit.com/microcontroller-compatible-audio-file-conversion
+
+>PCM 16-bit Mono WAV files at 22KHz sample rate, which is usually best for the current crop of microcontrollers which take WAV files and play them on a speaker.
+
+https://unix.stackexchange.com/questions/274144/sox-convert-a-wav-file-with-required-properties-in-a-single-command
+
+sox disturbence.wav -r 16000 -c 1 -b 16 disturbence_16000_mono_16bit.wav
+
+gives within one command
+
+Sample rate of 16 kHz (-r 16000),
+one channel (mono) (-c 1),
+16 bits bit depth (-b 16).
+
+sox <infile> -r 22000 -c 1 -b 16 <outfile.wav>
+
+
+## Docs
+http://docs.circuitpython.org/projects/trellism4/en/latest/api.html
+https://circuitpython.readthedocs.io/en/latest/shared-bindings/audioio/index.html
+https://learn.adafruit.com/a-logger-for-circuitpython/using-a-logger
+
+## Sounds
+
+http://turbobard.com/
+https://freesound.org/
