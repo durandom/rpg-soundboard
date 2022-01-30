@@ -130,3 +130,9 @@ dmypy.json
 
 # circuitpython
 .circuitpython.skip
+
+# sounds
+*.mp3
+*.wav
+*.flac
+sounds/
