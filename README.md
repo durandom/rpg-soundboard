@@ -7,6 +7,12 @@
     * `adafruit-circuitpython-bundle-7.x-mpy-20220127`
 
 
+## development
+
+```
+screen /dev/tty.usbmodem3201
+```
+
 https://learn.adafruit.com/microcontroller-compatible-audio-file-conversion
 
 >PCM 16-bit Mono WAV files at 22KHz sample rate, which is usually best for the current crop of microcontrollers which take WAV files and play them on a speaker.
@@ -33,9 +39,14 @@ https://learn.adafruit.com/a-logger-for-circuitpython/using-a-logger
 
 http://turbobard.com/
 https://freesound.org/
+https://wiki.roll20.net/Jukebox
 
 
 CircuitPython supports any MP3 file you like. We've found that mono and stereo files from 32kbit/s to 128kbit/s work, with sample rates from 16kHz to 44.1kHz. The DAC output on the SAMD51 M4 is just 12-bit so there's not much point in using higher bitrates.
 
 
 `find GDC -type f | head | xargs -I ./convert-mp3.sh`
+
+# color_names
+https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Colors/Color_picker_tool
+https://www.rapidtables.com/web/color/RGB_Color.html
