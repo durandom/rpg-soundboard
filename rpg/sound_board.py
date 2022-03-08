@@ -6,11 +6,10 @@ SoundBoard
 import time
 import board
 import audioio
-import audiocore
 import audiomp3
 import adafruit_trellism4
 import circuitpython_csv as csv
-
+import gc
 
 RED = 0xFF0000
 MAROON = 0x800000
@@ -42,9 +41,11 @@ class SoundBoard:
         self.heartbeat_sample = None
         self.last_playing_time = time.time()
         self.heartbeat_time = 9.5 * 60
+        self.deinit_while_not_playing = True
+        self.mp3_decoder = None
 
         self.init_samples()
-        self.init_pixels()                
+        self.init_pixels()
         self.pixels._neopixel.brightness = 0.4
 
 
@@ -83,33 +84,39 @@ class SoundBoard:
     def play(self, button_idx):
         sample = self.samples[button_idx]
 
-        if not self.audio:
-            self.audio = audioio.AudioOut(board.A1)
-        else:
-            if self.audio.playing:
-                self.audio.stop()
-                self.audio.deinit()
-                self.audio = audioio.AudioOut(board.A1)
 
-
-        
         # play the sample
         try:
             f = open(sample['filename'], 'rb')
-            # wav = audiocore.WaveFile(f)
-            snd = audiomp3.MP3Decoder(f)
-            log.debug(sample['filename'] +
-                ' - %d channels, %d bits per sample, %d Hz sample rate ' %
-                (snd.channel_count, snd.bits_per_sample, snd.sample_rate))
 
-            self.audio.play(snd)
+            # wav = audiocore.WaveFile(f)
+            if not self.mp3_decoder:
+                # https://github.com/adafruit/circuitpython/issues/6111#issuecomment-1059209917
+                log.debug('free mem %d', gc.mem_free())
+                gc.collect()
+                log.debug('free mem %d', gc.mem_free())
+                self.mp3_decoder = audiomp3.MP3Decoder(f)
+                log.debug('free mem %d', gc.mem_free())
+            else:
+                self.mp3_decoder.file = f
+
+            if not self.audio:
+                self.audio = audioio.AudioOut(left_channel=board.A1, right_channel=board.A0)
+
+            # logging with audio info might crash with
+            #   "RuntimeError: Internal audio buffer too small"
+            # log.debug(sample['filename'] +
+            #     ' - %d channels, %d bits per sample, %d Hz sample rate ' %
+            #     (self.mp3_decoder.channel_count, self.mp3_decoder.bits_per_sample, self.mp3_decoder.sample_rate))
+            log.debug(sample['filename'])
+
+            self.audio.play(self.mp3_decoder)
             # change color of button
             self.set_color(self.current_sample)
             self.set_color(button_idx, WHITE)
 
             # set current sample
             self.current_sample = button_idx
-                
         except OSError as e:
             # File not found! skip to next
             log.debug(str(e))
@@ -124,15 +131,18 @@ class SoundBoard:
             self.pixels[button_idx] = color
 
     def check_playing(self):
+        # FIXME: move to heartbeat method
         if not self.current_sample and self.heartbeat_sample and (time.time() - self.last_playing_time) > self.heartbeat_time:
             self.play(self.heartbeat_sample)
 
         # shutdown audio to avoid static noise when not playing
-        if self.audio and not self.audio.playing:
+        if self.deinit_while_not_playing and self.audio and not self.audio.playing:
+            # https://github.com/adafruit/circuitpython/issues/4181#issuecomment-778324632
+            log.debug("deinit audio")
             self.audio.deinit()
             self.audio = None
 
-            # reset color 
+            # reset color
             self.set_color(self.current_sample)
             self.current_sample = None
 
@@ -147,6 +157,7 @@ class SoundBoard:
             self.check_playing()
 
             # log.debug("tick...")
+            # log.debug('free mem %d', gc.mem_free())
             pressed = set(self.board.pressed_keys)
             just_pressed = pressed - current_press
             # just_released = current_press - pressed
@@ -154,6 +165,6 @@ class SoundBoard:
             for down in just_pressed:
                 log.debug(str(down))
                 self.play(down)
-            
+
             time.sleep(0.1)
             current_press = pressed
