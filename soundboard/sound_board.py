@@ -11,6 +11,9 @@ import adafruit_trellism4
 import circuitpython_csv as csv
 import gc
 import random
+import sys
+import os
+import microcontroller
 
 RED = 0xFF0000
 MAROON = 0x800000
@@ -26,6 +29,10 @@ PURPLE = 0x800080
 PINK = 0xFF0080
 WHITE = 0xFFFFFF
 BLACK = 0x000000
+
+E_COLOR = 0x0
+E_FILE = 0x1
+
 
 import adafruit_logging as logging
 log = logging.getLogger('test')
@@ -44,14 +51,17 @@ class SoundBoard:
         self.heartbeat_time = 9.5 * 60
         self.deinit_while_not_playing = True
         self.mp3_decoder = None
-        self.default_board = ''
-        self.current_board = self.default_board
-        self.board_ids = { self.current_board }
+        self.board_ids = set()
         self.default_color = BLACK
 
+        self.play_file('boot.mp3')
+
         self.init_samples()
-        self.init_pixels()
+        self.current_board = self.board_ids.copy().pop()
+        self.init_pixels(self.current_board)
         self.pixels._neopixel.brightness = 0.4
+
+
 
     def get_sample(self, board_idx, idx):
         if not board_idx in self.samples:
@@ -63,72 +73,105 @@ class SoundBoard:
 
 
     def init_samples(self, filename='sound_board.csv'):
-        self.samples[self.default_board] = {} # default board
-        for row in range(4):
-            for col in range(8):
-                self.samples[''][(row,col)] = {
-                    'color': self.default_color,
-                    'filename': ''
-                }
-
         with open(filename, mode="r", encoding="utf-8") as f:
             csvreader = csv.reader(f, delimiter=',', quotechar='"')
             for row in csvreader:
-                if not row[0].startswith('#'):
+                board_id = row[0].strip()
+                if not board_id.startswith('#') and board_id:
                     self.board_ids.add(row[0])
 
             f.seek(0)
 
+            header = None
+            required_keys = {'board','row','column','color','file','option'}
             for row in csvreader:
                 # log.debug(str(row))
-                if not row[0].startswith('#'):
-                    if len(row) < 5:
-                        log.debug("Skipping: " + row.join())
-                        continue
-                    (board_idx, row, col, color, file, options) = (x.strip() for x in row[0:6])
-                    # log.debug(str((board_idx,row,col,color,file,options)))
-                    if row and col and color and file:
-                        # offset row by 3 so that we can index with 0,0 in top left corner in config file
-                        idx = (3-int(row),int(col))
-                        entry = self.get_sample(board_idx, idx)
-                        try:
-                            entry['color'] = eval(color)
-                        except (SyntaxError, NameError) as e:
-                            log.debug(f'cant evaluate color {color}. Exception: "{e}"')
-                            entry['color']= self.default_color
+                if not header:
+                    header = row
+                    missing_keys = required_keys - set(header)
+                    if missing_keys:
+                        log.debug(f'Missing keys {missing_keys} in CSV')
+                        sys.exit(1)
+                    continue
 
-                        if file in self.board_ids:
-                            entry['filename'] = file
-                        else:
-                            entry['filename'] = self.sample_prefix + file
-                        if options == 'default':
+                if row[0].startswith('#'):
+                    log.debug(f'Skipping comment row {row}')
+                    continue
+
+                if len(row) < len(header):
+                    log.debug(f'Skipping because too few columns in row {row}')
+                    continue
+
+                # map row
+                e = {}; i = 0
+                for k in header:
+                    e[k] = row[i].strip()
+                    i = i + 1
+
+                board_idx = e['board']
+                file = e['file']
+                color = e['color']
+                row = e['row']
+                column = e['column']
+                option = e['option']
+
+                sample = {}
+
+                # offset row by 3 so that we can index with 0,0 in top left corner in config file
+                try:
+                    idx = (3-int(row),int(column))
+                except (ValueError) as ex:
+                    log.debug(f'cant evaluate row/column "{row}"/"{column}". Exception: "{ex}"')
+
+
+                try:
+                    if color == 'RANDOM':
+                        sample[E_COLOR] = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                    else:
+                        sample[E_COLOR] = eval(color)
+                except (SyntaxError, NameError) as ex:
+                    log.debug(f'cant evaluate color {color}. Exception: "{ex}"')
+                    continue
+
+                if file in self.board_ids:
+                    # it's a pointer to a board
+                    sample[E_FILE] = file
+                else:
+                    filename = self.sample_prefix + file
+                    try:
+                        os.stat(filename)
+                        sample[E_FILE] = filename
+                        if option == 'default':
                             self.heartbeat_sample = [board_idx, idx]
-                        if board_idx == self.default_board:
-                            for i in self.board_ids:
-                                e = self.get_sample(i, idx)
-                                e['color'] = entry['color']
-                                e['filename'] = entry['filename']
+                    except OSError as e:
+                        # File not found!
+                        log.debug(f'file does not exist {file}')
+                        continue
+
+                if board_idx:
+                    s = self.get_sample(board_idx, idx)
+                    s[E_COLOR] = sample[E_COLOR]
+                    s[E_FILE] = sample[E_FILE]
+                else:
+                    # empty board_id -> put it on every board
+                    for i in self.board_ids:
+                        s = self.get_sample(i, idx)
+                        s[E_COLOR] = sample[E_COLOR]
+                        s[E_FILE] = sample[E_FILE]
 
 
 
-    def init_pixels(self, board_idx = ''):
+    def init_pixels(self, board_idx):
         self.pixels._neopixel.fill(0)
         for idx, sample in self.samples[board_idx].items():
-            if 'color' in sample:
-                self.pixels[idx] = sample['color']
+            if E_COLOR in sample:
+                self.pixels[idx] = sample[E_COLOR]
             else:
                 self.pixels[idx] = self.default_color
 
-    def play(self, button_idx):
-        if button_idx in self.samples[self.current_board]:
-            sample = self.samples[self.current_board][button_idx]
-        else:
-            log.debug(f'{button_idx} not in board {self.current_board}')
-            return
-
-        # play the sample
+    def play_file(self, filename):
         try:
-            f = open(sample['filename'], 'rb')
+            f = open(filename, 'rb')
 
             # wav = audiocore.WaveFile(f)
             if not self.mp3_decoder:
@@ -146,46 +189,70 @@ class SoundBoard:
 
             # logging with audio info might crash with
             #   "RuntimeError: Internal audio buffer too small"
-            # log.debug(sample['filename'] +
+            # log.debug(sample[E_FILE] +
             #     ' - %d channels, %d bits per sample, %d Hz sample rate ' %
             #     (self.mp3_decoder.channel_count, self.mp3_decoder.bits_per_sample, self.mp3_decoder.sample_rate))
-            log.debug(sample['filename'])
+            log.debug(f'playing {filename}')
 
             self.audio.play(self.mp3_decoder)
-            # reset color of current sample
-            self.set_color(self.current_sample)
-            # change color of button
-            self.set_color(button_idx, WHITE)
-
-            # set current sample
-            self.current_sample = button_idx
         except OSError as e:
-            if sample['filename'] in self.board_ids:
-                # change board
-                log.debug(f'change board to {sample['filename']}')
-                self.current_board = sample['filename']
-                self.init_pixels(self.current_board)
-            else:
-                # File not found! skip to next
-                log.debug(str(e))
-                pass
+            # File not found!
+            log.debug(str(e))
         except MemoryError as e:
             log.debug(f'failed to allocate memory - "{e}"')
+
+
+    def play(self, button_idx):
+        if button_idx in self.samples[self.current_board]:
+            sample = self.samples[self.current_board][button_idx]
+        else:
+            log.debug(f'{button_idx} not in board {self.current_board}')
+            return
+
+        filename = sample[E_FILE]
+
+        # change board
+        if filename in self.board_ids:
+            log.debug(f'change board to {filename}')
+            self.current_board = filename
+            self.init_pixels(self.current_board)
+            return
+
+
+        # play the sample
+        self.play_file(filename)
+
+        # reset color of current sample
+        if self.current_sample:
+            self.set_color(self.current_sample)
+
+        # # change color of button
+        # self.set_color(button_idx, WHITE)
+
+        # self.pixels._neopixel.brightness = 0.4
+
+        # set current sample
+        self.current_sample = button_idx
 
 
     def set_color(self, button_idx, color=None):
         if not button_idx:
             log.debug('no button_idx in set_color?!')
-            return
+            raise
 
         if not color:
             if button_idx and button_idx in self.samples[self.current_board]:
                 sample = self.samples[self.current_board][button_idx]
-                color = sample['color']
+                color = sample[E_COLOR]
             else:
                 color = self.default_color
 
         self.pixels[button_idx] = color
+
+    def stop_playing(self):
+        if self.audio and self.audio.playing:
+            log.debug('stop_playing')
+            self.audio.stop()
 
     def check_playing(self):
         # FIXME: move to heartbeat method
@@ -201,7 +268,9 @@ class SoundBoard:
             self.audio = None
 
             # reset color
-            self.set_color(self.current_sample)
+            if self.current_sample:
+                self.set_color(self.current_sample)
+
             self.current_sample = None
 
             # set last playing time
@@ -221,12 +290,29 @@ class SoundBoard:
             # log.debug("tick...")
             # log.debug('free mem %d', gc.mem_free())
             pressed = set(self.board.pressed_keys)
+
+            # like ctr-alt-del 
+            # press top-right / top-left keys at once to reset
+            if pressed and len(pressed) > 1:
+                print(pressed)
+                if pressed == {(3, 7), (3, 0)}:
+                    microcontroller.reset()
+
             just_pressed = pressed - current_press
             # just_released = current_press - pressed
 
             for down in just_pressed:
-                log.debug(str(down))
-                self.play(down)
+                log.debug(f'press {down}')
+                if down == self.current_sample:
+                    self.stop_playing()
+                else:
+                    self.play(down)
 
             time.sleep(0.1)
             current_press = pressed
+
+            # mem = []
+            # if True:
+            #     log.debug('free mem %d', gc.mem_free())
+            #     for i in range(5):
+            #         mem.append([0]*256)
